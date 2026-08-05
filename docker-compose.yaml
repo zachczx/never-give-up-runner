@@ -1,0 +1,47 @@
+services:
+  runner:
+    image: myoung34/github-runner:latest
+    restart: unless-stopped
+
+    environment:
+      - 'REPO_URL=${REPO_URL}'
+      - 'RUNNER_NAME=${RUNNER_NAME}'
+      - 'ACCESS_TOKEN=${ACCESS_TOKEN}'
+      - RUNNER_WORKDIR=/runner/work
+      - 'RUNNER_SCOPE=${RUNNER_SCOPE:-repo}'
+      - 'LABELS=${LABELS:-default}'
+      - 'ORG_NAME=${ORG_NAME}'
+
+    security_opt:
+      - label:disable
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-data:/runner
+
+    cpu_shares: ${RUNNER_CPU_SHARES:-256}
+    mem_limit: ${RUNNER_MEMORY_LIMIT:-2g}
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          repo="$${REPO_URL#https://github.com/}";
+          repo="$${repo%.git}";
+          curl --fail --silent --show-error --get
+          -H "Accept: application/vnd.github+json"
+          -H "Authorization: Bearer $$ACCESS_TOKEN"
+          -H "X-GitHub-Api-Version: 2026-03-10"
+          --data-urlencode "name=$$RUNNER_NAME"
+          "https://api.github.com/repos/$$repo/actions/runners"
+          |
+          jq -e --arg name "$$RUNNER_NAME"
+          '.runners | any(.name == $name and .status == "online")'
+          >/dev/null
+      start_period: 90s
+      interval: 60s
+      timeout: 15s
+      retries: 3
+
+volumes:
+  runner-data:
