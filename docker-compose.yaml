@@ -8,9 +8,128 @@ services:
       - 'RUNNER_NAME=${RUNNER_NAME}'
       - 'ACCESS_TOKEN=${ACCESS_TOKEN}'
       - RUNNER_WORKDIR=/runner/work
+      - GOMODCACHE=/runner/cache/go-mod
+      - GOCACHE=/runner/cache/go-build
+      - NPM_CONFIG_CACHE=/runner/cache/npm
+      - 'WARM_ACTION_CACHE=${WARM_ACTION_CACHE:-true}'
       - 'RUNNER_SCOPE=${RUNNER_SCOPE:-repo}'
       - 'LABELS=${LABELS:-default}'
       - 'ORG_NAME=${ORG_NAME}'
+
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -uo pipefail
+
+        refresh_action_cache() {
+          if [[ "$${WARM_ACTION_CACHE:-true}" != "true" ]]; then
+            echo "GitHub action archive cache warm-up disabled."
+            return 0
+          fi
+
+          cache_root=/runner/cache
+          cache_dir="$${cache_root}/actions"
+          release_api=https://api.github.com/repos/actions/action-versions/releases/latest
+          if ! mkdir -p "$${cache_root}" "$${cache_dir}"; then
+            echo "Warning: persistent cache directory is not writable; starting without action archive warm-up."
+            return 0
+          fi
+
+          if ! release_json="$$(curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "$${release_api}")"; then
+            echo "Warning: could not check the GitHub action archive release; using the existing cache if available."
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          if ! version="$$(jq -er '.tag_name' <<<"$${release_json}")" || \
+             ! asset_url="$$(jq -er '.assets[] | select(.name == "action-versions.tar.gz") | .browser_download_url' <<<"$${release_json}")"; then
+            echo "Warning: GitHub action archive metadata was incomplete; using the existing cache if available."
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          digest="$$(jq -r '.assets[] | select(.name == "action-versions.tar.gz") | .digest // empty' <<<"$${release_json}")"
+
+          if [[ -f "$${cache_dir}/.version" ]] && \
+             [[ "$$(cat "$${cache_dir}/.version")" == "$${version}" ]] && \
+             find "$${cache_dir}" -type f -name '*.tar.gz' -print -quit | grep -q .; then
+            echo "GitHub action archive cache is current ($${version})."
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          if ! work_dir="$$(mktemp -d "$${cache_root}/action-cache.XXXXXX")"; then
+            echo "Warning: could not create action cache staging directory; keeping the existing cache."
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+          archive="$${work_dir}/action-versions.tar.gz"
+          extracted="$${work_dir}/extracted"
+          mkdir -p "$${extracted}"
+
+          echo "Refreshing GitHub action archive cache to $${version}..."
+          if ! curl --fail --silent --show-error --location --connect-timeout 10 --max-time 600 --retry 2 \
+            "$${asset_url}" --output "$${archive}"; then
+            echo "Warning: action archive download failed; keeping the existing cache."
+            rm -rf "$${work_dir}"
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          if [[ "$${digest}" == sha256:* ]]; then
+            expected="$${digest#sha256:}"
+            actual="$$(sha256sum "$${archive}" | awk '{print $$1}')"
+            if [[ "$${actual}" != "$${expected}" ]]; then
+              echo "Warning: action archive checksum verification failed; keeping the existing cache."
+              rm -rf "$${work_dir}"
+              export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+              return 0
+            fi
+          fi
+
+          if ! tar -xzf "$${archive}" -C "$${extracted}"; then
+            echo "Warning: action archive extraction failed; keeping the existing cache."
+            rm -rf "$${work_dir}"
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          previous="$${cache_dir}.previous"
+          if ! rm -rf "$${previous}"; then
+            echo "Warning: could not clear the previous action cache backup; keeping the existing cache."
+            rm -rf "$${work_dir}"
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+          if [[ -d "$${cache_dir}" ]] && ! mv "$${cache_dir}" "$${previous}"; then
+            echo "Warning: could not stage the existing action cache for replacement; keeping it unchanged."
+            rm -rf "$${work_dir}"
+            export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+            return 0
+          fi
+
+          if mv "$${extracted}" "$${cache_dir}"; then
+            printf '%s\n' "$${version}" > "$${cache_dir}/.version"
+            rm -rf "$${previous}" "$${work_dir}"
+            echo "GitHub action archive cache ready ($${version})."
+          else
+            echo "Warning: could not activate the refreshed action archive cache; restoring the previous cache."
+            rm -rf "$${cache_dir}"
+            if [[ -d "$${previous}" ]]; then
+              mv "$${previous}" "$${cache_dir}"
+            fi
+            rm -rf "$${work_dir}"
+          fi
+
+          export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE="$${cache_dir}"
+        }
+
+        refresh_action_cache
+        exec ./bin/Runner.Listener run --startuptype service
 
     security_opt:
       - label:disable
@@ -18,6 +137,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runner-data:/runner
+      - runner-toolcache:/opt/hostedtoolcache
 
     cpu_shares: ${RUNNER_CPU_SHARES:-256}
     mem_limit: ${RUNNER_MEMORY_LIMIT:-2g}
@@ -38,10 +158,11 @@ services:
           jq -e --arg name "$$RUNNER_NAME"
           '.runners | any(.name == $name and .status == "online")'
           >/dev/null
-      start_period: 90s
+      start_period: '${RUNNER_HEALTH_START_PERIOD:-5m}'
       interval: 60s
       timeout: 15s
       retries: 3
 
 volumes:
   runner-data:
+  runner-toolcache:
