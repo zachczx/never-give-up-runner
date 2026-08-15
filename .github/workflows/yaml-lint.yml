@@ -1,0 +1,36 @@
+name: YAML lint
+
+on:
+  pull_request:
+    paths:
+      - docker-compose.yaml
+      - .yamllint.yml
+      - .github/workflows/yaml-lint.yml
+  push:
+    branches:
+      - main
+    paths:
+      - docker-compose.yaml
+      - .yamllint.yml
+      - .github/workflows/yaml-lint.yml
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lint Docker Compose YAML
+        uses: reviewdog/action-yamllint@de68272fdca5f2a961fb309e0d2e13c2eb186d9e # v1.23.1
+        with:
+          reporter: github-check
+          filter_mode: nofilter
+          fail_level: warning
+          yamllint_flags: -c .yamllint.yml docker-compose.yaml
