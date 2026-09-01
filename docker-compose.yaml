@@ -1,6 +1,6 @@
 services:
   runner:
-    image: myoung34/github-runner:ubuntu-jammy
+    image: myoung34/github-runner:ubuntu-noble
     restart: unless-stopped
 
     environment:
