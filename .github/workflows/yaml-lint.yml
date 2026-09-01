@@ -2,17 +2,9 @@ name: YAML lint
 
 on:
   pull_request:
-    paths:
-      - docker-compose.yaml
-      - .yamllint.yml
-      - .github/workflows/yaml-lint.yml
-  push:
     branches:
       - main
-    paths:
-      - docker-compose.yaml
-      - .yamllint.yml
-      - .github/workflows/yaml-lint.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
