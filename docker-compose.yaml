@@ -156,7 +156,7 @@ services:
           "https://api.github.com/repos/$$repo/actions/runners"
           |
           jq -e --arg name "$$RUNNER_NAME"
-          '.runners | any(.name == $name and .status == "online")'
+          '.runners | any(.name == $$name and .status == "online")'
           >/dev/null
       start_period: '${RUNNER_HEALTH_START_PERIOD:-5m}'
       interval: 60s
