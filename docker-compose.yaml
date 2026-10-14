@@ -22,6 +22,12 @@ services:
       - |
         set -uo pipefail
 
+        # Reach the host Docker daemon through the mounted /var/run directory.
+        # A bind-mounted socket file keeps pointing at the old socket after the
+        # host Docker daemon restarts; a symlink into the directory always
+        # resolves to the current socket.
+        ln -sfn /host-run/docker.sock /var/run/docker.sock
+
         refresh_action_cache() {
           if [[ "$${WARM_ACTION_CACHE:-true}" != "true" ]]; then
             echo "GitHub action archive cache warm-up disabled."
@@ -135,7 +141,7 @@ services:
       - label:disable
 
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run:/host-run:ro
       - runner-data:/runner
       - runner-toolcache:/opt/hostedtoolcache
 
@@ -146,6 +152,7 @@ services:
       test:
         - CMD-SHELL
         - >-
+          docker version >/dev/null 2>&1 || exit 1;
           repo="$${REPO_URL#https://github.com/}";
           repo="$${repo%.git}";
           curl --fail --silent --show-error --get
