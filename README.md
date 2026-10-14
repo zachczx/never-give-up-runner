@@ -12,10 +12,20 @@ This setup keeps job workspaces disposable while making runner infrastructure du
 
 - checks GitHub to confirm the runner is online and ready for jobs;
 - detects the stuck state where the container is running but GitHub cannot dispatch work to it;
+- checks that the runner can still reach the host Docker daemon, which jobs with service containers need;
+- keeps Docker access working after the host Docker daemon restarts;
 - gives CI configurable lower CPU priority and a memory limit;
 - persists the GitHub tool cache used by actions such as `setup-go` and `setup-node` across container recreation;
 - keeps Go module/build caches and the npm cache under the persistent runner volume; and
 - warms GitHub's official first-party action archive cache on runner startup.
+
+## Docker access
+
+Jobs that start service containers, such as Postgres for integration tests, use the host Docker daemon. The runner used to bind-mount the single file `/var/run/docker.sock`. When the host Docker daemon restarts, for example during a Coolify update, it creates a new socket file, and a file bind mount keeps pointing at the old one. This is the most likely cause of an outage in October 2026: the runner stayed online for GitHub and healthy for Coolify, but every Docker call failed with `Cannot connect to the Docker daemon`.
+
+The runner now mounts the host's `/var/run` directory read-only at `/host-run` and links `/var/run/docker.sock` to `/host-run/docker.sock` at startup, so it always reaches the current socket. The read-only flag stops the container from changing files in the host's `/var/run`. It does not restrict Docker itself: as before, the runner has full control of the host Docker daemon. The health check also runs `docker version` and reports the container unhealthy when Docker is unreachable.
+
+The startup link needs the image's default `RUN_AS_ROOT=true`, because a non-root runner cannot write `/var/run`. Neither Docker Compose nor Coolify restarts a container just because it is unhealthy. The directory mount is what recovers from Docker restarts; the health check only makes any other Docker outage visible.
 
 ## Persistent caches
 
