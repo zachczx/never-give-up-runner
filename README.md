@@ -29,12 +29,12 @@ The startup link needs the image's default `RUN_AS_ROOT=true`, because a non-roo
 
 ## Resource limits
 
-Set these through the resource's environment variables:
+Set these through the resource's environment variables. Coolify's Resource Limits form does not apply to a Docker Compose deployment: Coolify writes those values only into the compose file it generates for Dockerfile, Nixpacks, image and static deployments, and a Compose deployment uses this file as written.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RUNNER_CPU_SHARES` | `256` | CPU weight against Docker's default of 1024. CI yields to other services only while the host is busy, and gets the whole host when it is idle. |
-| `RUNNER_CPUS` | `0` (no cap) | Hard CPU cap. It throttles CI even on an idle host: a 0.75 cap made one project's browser test job about 2.2 times slower. Prefer the weight above for protecting production. |
+| `RUNNER_CPUS` | `0` (no cap) | Hard CPU cap. It throttles CI even on an idle host, so prefer the weight above for protecting production. |
 | `RUNNER_MEMORY_LIMIT` | `4g` | Memory limit for the runner and its jobs. A Playwright job running a Vite dev server, Chromium and the test runner uses about 1.7 GB, and the runner process and page cache count against the same limit. The old 2 GB default left no headroom. |
 
 Keep the memory limits of all runners on a host, plus the host's other services, within its RAM. A limit is a cap, not a reservation, so an overcommitted host can still run out of memory.
@@ -45,7 +45,7 @@ After a redeploy, confirm the values Docker applied:
 docker inspect <runner-container> --format 'cpus={{.HostConfig.NanoCpus}} quota={{.HostConfig.CpuQuota}} shares={{.HostConfig.CpuShares}} mem={{.HostConfig.Memory}}'
 ```
 
-The defaults show `cpus=0 quota=0 shares=256 mem=4294967296`. Different values mean a limit set elsewhere, such as Coolify's resource settings, is overriding this file.
+The defaults show `cpus=0 quota=0 shares=256 mem=4294967296`. Different values mean the environment variables above are set, or the deployment is not using this file.
 
 ## Persistent caches
 
