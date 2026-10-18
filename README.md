@@ -14,7 +14,7 @@ This setup keeps job workspaces disposable while making runner infrastructure du
 - detects the stuck state where the container is running but GitHub cannot dispatch work to it;
 - checks that the runner can still reach the host Docker daemon, which jobs with service containers need;
 - keeps Docker access working after the host Docker daemon restarts;
-- gives CI configurable lower CPU priority and a memory limit;
+- gives CI configurable lower CPU priority, an optional CPU cap and a memory limit;
 - persists the GitHub tool cache used by actions such as `setup-go` and `setup-node` across container recreation;
 - keeps Go module/build caches and the npm cache under the persistent runner volume; and
 - warms GitHub's official first-party action archive cache on runner startup.
@@ -26,6 +26,26 @@ Jobs that start service containers, such as Postgres for integration tests, use 
 The runner now mounts the host's `/var/run` directory read-only at `/host-run` and links `/var/run/docker.sock` to `/host-run/docker.sock` at startup, so it always reaches the current socket. The read-only flag stops the container from changing files in the host's `/var/run`. It does not restrict Docker itself: as before, the runner has full control of the host Docker daemon. The health check also runs `docker version` and reports the container unhealthy when Docker is unreachable.
 
 The startup link needs the image's default `RUN_AS_ROOT=true`, because a non-root runner cannot write `/var/run`. Neither Docker Compose nor Coolify restarts a container just because it is unhealthy. The directory mount is what recovers from Docker restarts; the health check only makes any other Docker outage visible.
+
+## Resource limits
+
+Set these through the resource's environment variables:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `RUNNER_CPU_SHARES` | `256` | CPU weight against Docker's default of 1024. CI yields to other services only while the host is busy, and gets the whole host when it is idle. |
+| `RUNNER_CPUS` | `0` (no cap) | Hard CPU cap. It throttles CI even on an idle host: a 0.75 cap made one project's browser test job about 2.2 times slower. Prefer the weight above for protecting production. |
+| `RUNNER_MEMORY_LIMIT` | `4g` | Memory limit for the runner and its jobs. A Playwright job running a Vite dev server, Chromium and the test runner uses about 1.7 GB, and the runner process and page cache count against the same limit. The old 2 GB default left no headroom. |
+
+Keep the memory limits of all runners on a host, plus the host's other services, within its RAM. A limit is a cap, not a reservation, so an overcommitted host can still run out of memory.
+
+After a redeploy, confirm the values Docker applied:
+
+```sh
+docker inspect <runner-container> --format 'cpus={{.HostConfig.NanoCpus}} quota={{.HostConfig.CpuQuota}} shares={{.HostConfig.CpuShares}} mem={{.HostConfig.Memory}}'
+```
+
+The defaults show `cpus=0 quota=0 shares=256 mem=4294967296`. Different values mean a limit set elsewhere, such as Coolify's resource settings, is overriding this file.
 
 ## Persistent caches
 
