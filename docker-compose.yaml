@@ -145,8 +145,13 @@ services:
       - runner-data:/runner
       - runner-toolcache:/opt/hostedtoolcache
 
+    # cpu_shares is a weight: CI yields to default-weight services only while
+    # the host is busy. cpus is a hard cap that throttles CI even on an idle
+    # host; 0 leaves it uncapped. Check the applied values with docker inspect
+    # (see README) after changing them.
     cpu_shares: ${RUNNER_CPU_SHARES:-256}
-    mem_limit: ${RUNNER_MEMORY_LIMIT:-2g}
+    cpus: ${RUNNER_CPUS:-0}
+    mem_limit: ${RUNNER_MEMORY_LIMIT:-4g}
 
     healthcheck:
       test:
